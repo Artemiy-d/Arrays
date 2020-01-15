@@ -7,6 +7,7 @@
 #include <cassert>
 #include <random>
 #include <string>
+#include <set>
 
 using Value = std::string;
 
@@ -23,18 +24,23 @@ struct Command {
 };
 
 size_t getValueCost(const Value& value) {
-    return  value == "x" ? 2 : 1;
+    return 1;// value == "x" ? 2 : 1;
 }
 
 const size_t InvalidIndex = size_t(-1);
 
 struct Container {
 
+    struct ExtendedIndex {
+        size_t index;
+        std::optional<size_t> group;
+    };
+
     template <typename T>
     size_t forEachSlot(size_t index, T f) const {
         size_t result = 0;
         for ( auto& pair : slotsToIndexes ) {
-            if ( pair.second == index ) {
+            if ( pair.second.index == index ) {
                 f( pair.first );
                 ++result;
             }
@@ -45,7 +51,7 @@ struct Container {
 
     std::optional<size_t> findSlot(const size_t index) const {
         auto foundSlotToIndex = std::find_if( slotsToIndexes.begin(), slotsToIndexes.end(), [index](const auto& pair) {
-            return pair.second == index;
+            return pair.second.index == index;
         } );
 
         return foundSlotToIndex == slotsToIndexes.end() ? std::optional<size_t>() : foundSlotToIndex->first;
@@ -78,20 +84,34 @@ struct Container {
     size_t calculateNewIndex( size_t index ) const {
         size_t newIndex = index;
 
+        auto groups = getGroups();
+
         std::vector< size_t > removedIndexes;
         for (auto& slotToNewIndex : slotsToNewIndexes)  {
             const auto found = slotsToIndexes.find( slotToNewIndex.first );
             if ( found != slotsToIndexes.end() ) {
-                removedIndexes.push_back( found->second );
+                removedIndexes.push_back( found->second.index );
             }
 
-            if ( slotToNewIndex.second != InvalidIndex && slotToNewIndex.second < index ) {
+            if ( slotToNewIndex.second.index != InvalidIndex && slotToNewIndex.second.index < index ) {
                 assert(newIndex);
+
                 --newIndex;
+
+                assert(!slotToNewIndex.second.group);
+
+                if ( !slotToNewIndex.second.group ) {
+
+                    if ( slotToNewIndex.second.group )
+                        groups.insert( *slotToNewIndex.second.group );
+
+                }
             }
         }
 
         std::sort( removedIndexes.begin(), removedIndexes.end() );
+        removedIndexes.erase( std::unique( removedIndexes.begin(), removedIndexes.end() ), removedIndexes.end() );
+
         for ( auto removedIndex : removedIndexes ) {
             if ( removedIndex < newIndex )
                 ++newIndex;
@@ -108,20 +128,20 @@ struct Container {
         auto foundSlotToNewIndex = slotsToNewIndexes.find( command.slotId );
 
         auto eraseImpl = [&]() {
-            const auto index = foundSlotToIndex->second;
+            const auto index = foundSlotToIndex->second.index;
             values.erase( values.begin() + index );
 
             slotsToIndexes.erase( foundSlotToIndex );
             foundSlotToIndex = slotsToIndexes.end();
 
             for ( auto& slotToIndex : slotsToIndexes ) {
-                if ( slotToIndex.second > index && slotToIndex.second != InvalidIndex )
-                    --slotToIndex.second;
+                if ( slotToIndex.second.index > index )
+                    --slotToIndex.second.index;
             }
         };
 
         auto insertImpl = [&]() {
-            auto index =  calculateNewIndex( foundSlotToNewIndex->second );
+            auto index = calculateNewIndex( foundSlotToNewIndex->second.index );
             assert(command.value);
             assert(index <= values.size());
 
@@ -130,11 +150,11 @@ struct Container {
             values.insert( values.begin() + index, *command.value );
 
             for ( auto& slotToIndex : slotsToIndexes ) {
-                if ( slotToIndex.second >= index && slotToIndex.second != InvalidIndex )
-                    ++slotToIndex.second;
+                if ( slotToIndex.second.index >= index )
+                    ++slotToIndex.second.index;
             }
 
-            slotsToIndexes.emplace( foundSlotToNewIndex->first, index );
+            slotsToIndexes.emplace( foundSlotToNewIndex->first, ExtendedIndex{ index, foundSlotToNewIndex->second.group } );
             slotsToNewIndexes.erase( foundSlotToNewIndex );
             foundSlotToNewIndex = slotsToNewIndexes.end();
         };
@@ -144,8 +164,8 @@ struct Container {
                 eraseImpl();
             }
             else {
-                if ( foundSlotToNewIndex == slotsToNewIndexes.end() || foundSlotToNewIndex->second == InvalidIndex ) {
-                    values[ foundSlotToIndex->second ] = *command.value;
+                if ( foundSlotToNewIndex == slotsToNewIndexes.end() || foundSlotToNewIndex->second.index == InvalidIndex ) {
+                    values[ foundSlotToIndex->second.index ] = *command.value;
                    // slotsToNewIndexes.erase( foundSlotToNewIndex );
                 }
                 else {
@@ -161,7 +181,7 @@ struct Container {
         else if ( command.value ) {
 
             if ( foundSlotToNewIndex == slotsToNewIndexes.end() ) {
-                slotsToIndexes.emplace( getFreeSlot(), values.size() );
+                slotsToIndexes.emplace( getFreeSlot(), ExtendedIndex{ values.size(), {} } );
                 values.push_back( *command.value );
             }
             else {
@@ -176,6 +196,8 @@ struct Container {
     }
 
     std::vector<Command> set(const std::vector<Value>& newValues) {
+        slotsToNewIndexes.clear();
+
         std::vector<Command> result;
 
         std::vector<size_t> addedValueIndexes;
@@ -202,38 +224,41 @@ struct Container {
             }
         }
 
-        std::map< size_t, size_t > newSlotToIndexes;
+        std::map< size_t, ExtendedIndex > newSlotToIndexes;
+
         std::vector< Value > fixedValues;
         fixedValues.reserve( values.size() );
 
         size_t j = 0;
         for ( size_t i = 0; i < values.size(); ++i ) {
             if ( j < indexes.size() && i == indexes[j] ) {
-                const auto slotsCount = forEachSlot( i, [&](size_t slot)
-                {
-                    newSlotToIndexes.emplace( slot, fixedValues.size() );
-
-                    if ( addedValueIndexes.empty() ) {
+                if ( addedValueIndexes.empty() ) {
+                    forEachSlot( i, [&](size_t slot) {
                         result.push_back( Command{ slot, {} } );
-                        slotsToNewIndexes.emplace( slot, InvalidIndex );
-                    }
-                    else {
+                        slotsToNewIndexes.emplace( slot, ExtendedIndex{ InvalidIndex, {} } );
+                        newSlotToIndexes.emplace( slot, ExtendedIndex{ fixedValues.size(), slotsToIndexes[slot].group } );
+                    });
+                }
+                else {
+                    forEachSlot( i, [&](size_t slot) {
                         result.push_back( Command{ slot, newValues[addedValueIndexes.back()] } );
-                        slotsToNewIndexes.emplace( slot, addedValueIndexes.back() );
+                        slotsToNewIndexes.emplace( slot, ExtendedIndex{ addedValueIndexes.back(), slotsToIndexes[slot].group } );
+                        newSlotToIndexes.emplace( slot, ExtendedIndex{ fixedValues.size(), slotsToIndexes[slot].group } );
+                    });
 
-                        addedValueIndexes.pop_back();
-                    }
-                });
+                    addedValueIndexes.pop_back();
+                }
 
-                assert(slotsCount);
+                //assert(slotsCount);
 
                 fixedValues.push_back( values[ i ] );
                 ++j;
             }
             else {
+
                 const auto slotsCount = forEachSlot( existingValueIndexes[ i - j ], [&](size_t slot)
                 {
-                    newSlotToIndexes.emplace( slot, fixedValues.size() );
+                    newSlotToIndexes.emplace( slot, ExtendedIndex{ fixedValues.size(), slotsToIndexes[slot].group } );
                 });
 
                 assert(slotsCount);
@@ -247,18 +272,55 @@ struct Container {
 
         onValuesChanged();
 
+        auto groups = getGroups();
+
         for ( auto addedIndex : addedValueIndexes ) {
             const auto slot = getFreeSlot();
-            slotsToNewIndexes.emplace( slot, addedIndex );
 
-            result.push_back( Command{ slot, newValues[addedIndex] } );
+            const auto count = getValueCost( newValues[addedIndex] );
+
+            auto group = count == 1 ? std::optional<size_t>() : getFreeGroup(groups);
+
+            if (group)
+                groups.insert(*group);
+
+            for ( size_t i = 0; i < count; ++i ) {
+                slotsToNewIndexes.emplace( slot, ExtendedIndex{ addedIndex, group } );
+
+                result.push_back( Command{ slot, newValues[addedIndex] } );
+            }
         }
 
         return result;
     }
 
-    std::map< size_t, size_t > slotsToIndexes;
-    std::map< size_t, size_t > slotsToNewIndexes;
+    std::set< size_t > getGroups() const {
+        std::set< size_t > result;
+        for ( auto& pair : slotsToIndexes ) {
+            if ( pair.second.group ) {
+                result.insert( *pair.second.group );
+            }
+        }
+
+    /*    for ( auto& pair : slotsToNewIndexes ) {
+            if ( pair.second.group ) {
+                result.insert( *pair.second.group );
+            }
+        }*/
+
+        return result;
+    }
+
+    size_t getFreeGroup( const std::set< size_t >& groups ) const {
+        for ( size_t i = 0; ; ++i ) {
+            if ( groups.find( i ) == groups.end() )
+                return i;
+        }
+    }
+
+    std::map< size_t, ExtendedIndex > slotsToIndexes;
+    std::map< size_t, ExtendedIndex > slotsToNewIndexes;
+
     std::vector<Value> values;
 };
 
