@@ -33,9 +33,8 @@ std::vector< Value > splitValue(const Value& v) {
 
 
 
-std::vector< std::pair<Value, size_t> > splitValues(const std::vector< Value >& vals) {
+std::vector< std::pair<Value, size_t> > splitValues(const std::vector< Value >& vals, size_t index = 0) {
     std::vector< std::pair<Value, size_t> > result;
-    size_t index = 0;
     for ( auto& v : vals ) {
         for ( auto& v1 : splitValue(v) )
             result.emplace_back( v1, index );
@@ -178,8 +177,30 @@ struct Container {
 
         auto foundSlotToIndex = slotsToIndexes.find( command.slotId );
         auto foundSlotToNewIndex = slotsToNewIndexes.find( command.slotId );
-
-        auto splitedValues = splitValues( values );
+        
+        size_t maxGroup = 0;
+        for ( auto& slotToIndex : slotsToIndexes ) {
+            if ( slotToIndex.second.group != InvalidIndex ) {
+                maxGroup = std::max( maxGroup, slotToIndex.second.group );
+            }
+        }
+        
+        auto splitedValues = splitValues( values, maxGroup + 1 );
+        
+        for ( auto& slotToIndex : slotsToIndexes ) {
+            auto i = slotToIndex.second.index;
+            if ( slotToIndex.second.group != InvalidIndex &&
+                i < splitedValues.size() &&
+                splitedValues[ i ].second > maxGroup ) {
+                
+                auto g = splitedValues[ i ].second;
+                for (auto j = i; j && splitedValues[ j - 1 ].second == g; --j )
+                    splitedValues[i].second = slotToIndex.second.group;
+                    
+                for ( ; i < splitedValues.size() && splitedValues[i].second == g; ++i )
+                    splitedValues[i].second = slotToIndex.second.group;
+            }
+        }
 
         auto eraseImpl = [&]() {
             const auto index = foundSlotToIndex->second.index;
@@ -201,46 +222,7 @@ struct Container {
 
             index = std::min(index, splitedValues.size());
             
-            auto baseIndex = std::numeric_limits<size_t>::max();
-           // if ( auto group = foundSlotToNewIndex->second.group ) {
-              //  auto g = *group;
-            auto group = foundSlotToNewIndex->second.group;
-
-
-
-            if ( group != InvalidIndex ) {
-                if ( index > 0 ) {
-                    auto slot = findSlot(index - 1);
-                    if (slot != InvalidIndex)
-                    {
-
-                        if ( slotsToIndexes[slot].group == group ) {
-                            baseIndex = splitedValues[ index - 1 ].second;
-                        }
-
-                    }
-                }
-
-                if ( baseIndex == std::numeric_limits<size_t>::max() && index < splitedValues.size() ) {
-                    auto slot = findSlot(index);
-                    if (slot != InvalidIndex ) {
-                        if ( slotsToIndexes[slot].group == group ) {
-                            baseIndex = splitedValues[ index ].second;
-                        }
-
-                    }
-                }
-            }
-
-
-            if ( *command.value == "0" && baseIndex == 7 )
-            {
-                int x = 1;
-                ++x;
-            }
-           // }
-            
-            splitedValues.insert( splitedValues.begin() + index, { *command.value, baseIndex } );
+            splitedValues.insert( splitedValues.begin() + index, { *command.value, foundSlotToNewIndex->second.group } );
 
             for ( auto& slotToIndex : slotsToIndexes ) {
                 if ( slotToIndex.second.index >= index )
@@ -449,6 +431,9 @@ int main()
     doTest({ } );
 
     for ( int i = 0; i < 30000; ++i ) {
+        if (i == 36) {
+            int x = 1;
+        }
         std::vector<Value> values( rand() % 17 );
         for ( auto& v : values ) {
             v = std::to_string(rand() % 11);
