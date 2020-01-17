@@ -11,6 +11,7 @@
 
 using Value = std::string;
 using SplitedValues = std::vector< std::pair<Value, size_t> >;
+const size_t InvalidIndex = std::numeric_limits<size_t>::max();
 
 template <typename It>
 Value mergeValue(It begin, It end) {
@@ -18,9 +19,6 @@ Value mergeValue(It begin, It end) {
     for (  ; begin != end; ++begin)
         result += *begin;
 
-    if ( result == "80" ) {
-        int x = 1;
-    }
     return result;
 }
 
@@ -50,7 +48,7 @@ std::vector< Value > mergeValues( const std::vector< std::pair<Value, size_t> >&
     auto it = splitedValues.begin();
     for ( ; it != splitedValues.end(); ) {
         auto end = it + 1;
-        if ( it->second != std::numeric_limits<size_t>::max() )
+        if ( it->second != InvalidIndex )
         {
             end = std::find_if( end, splitedValues.end(), [it](const std::pair<Value, size_t>& x) {
                 return x.second != it->second;
@@ -80,12 +78,6 @@ struct Command {
     std::optional<Value> value;
    // CommandType type;
 };
-
-size_t getValueCost(const Value& value) {
-    return value == "7" ? 2 : 1;
-}
-
-const size_t InvalidIndex = size_t(-1);
 
 struct Container {
 
@@ -443,13 +435,15 @@ int main()
         }
         std::vector<Value> values( rand() % 17 );
         for ( auto& v : values ) {
-            v = std::to_string(rand() % 13);
+            v = std::to_string(rand() % 24);
             if ( v == "10" )
                 v = "xy";
             else if ( v == "11" )
                 v = "x";
             else if ( v == "12" )
                 v = "y";
+            else if ( v == "13" )
+                v = "xuy xuy";
         }
 
         doTest( values );
