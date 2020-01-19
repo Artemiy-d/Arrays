@@ -14,7 +14,7 @@ using SplitedValues = std::vector< std::pair<Value, size_t> >;
 const size_t InvalidIndex = std::numeric_limits<size_t>::max();
 
 template <typename It>
-Value mergeValue(It begin, It end) {
+Value mergeValue(It& begin, It end) {
     Value result;
     for (  ; begin != end; ++begin)
         result += *begin;
@@ -61,22 +61,20 @@ std::vector< Value > mergeValues( const std::vector< std::pair<Value, size_t> >&
         for ( ; it != end; ++it )
             temp.push_back( it->first );
 
-        result.push_back( mergeValue(temp.begin(), temp.end()) );
+        for ( auto it = temp.begin(); it != temp.end(); ) {
+            auto prevIt = it;
+            result.push_back( mergeValue(it, temp.end()) );
+            assert( it > prevIt );
+        }
+        
     }
 
     return result;
 }
 
-enum class CommandType {
-    Add,
-    Move,
-    Remove
-};
-
 struct Command {
     size_t slotId;
     std::optional<Value> value;
-   // CommandType type;
 };
 
 struct Container {
@@ -178,16 +176,8 @@ struct Container {
     }
 
     void applyCommand(const Command& command) {
-
-        if ( command.value && command.value == "2" ) {
-            int x = 0;
-            ++x;
-        }
-
         auto foundSlotToIndex = slotsToIndexes.find( command.slotId );
         auto foundSlotToNewIndex = slotsToNewIndexes.find( command.slotId );
-        
-
         
         auto splitedValues = splitValues( values );
         reassignGroups( splitedValues );
@@ -231,7 +221,12 @@ struct Container {
             else {
                 if ( foundSlotToNewIndex == slotsToNewIndexes.end() || foundSlotToNewIndex->second.index == InvalidIndex ) {
                     splitedValues[ foundSlotToIndex->second.index ].first = *command.value;
-                   // slotsToNewIndexes.erase( foundSlotToNewIndex );
+                    if ( foundSlotToNewIndex != slotsToNewIndexes.end() ) {
+                        for ( auto& slotToNewIndex : slotsToNewIndexes ) {
+                            if ( slotToNewIndex.second.index != InvalidIndex && slotToNewIndex.second.index > foundSlotToNewIndex->second.index )
+                                --slotToNewIndex.second.index;
+                        }
+                    }
                 }
                 else {
                     eraseImpl();
@@ -240,30 +235,26 @@ struct Container {
             }
 
             slotsToNewIndexes.erase( command.slotId );
-
-            std::vector<size_t> indexes;
-            values = mergeValues(splitedValues, indexes);
-
-            onValuesChanged();
         }
         else if ( command.value ) {
 
             if ( foundSlotToNewIndex == slotsToNewIndexes.end() ) {
-                slotsToIndexes.emplace( getFreeSlot(), ExtendedIndex{ values.size(), {} } );
+                slotsToIndexes.emplace( getFreeSlot(), ExtendedIndex{ values.size(), InvalidIndex } );
                 splitedValues.emplace_back( *command.value, InvalidIndex );
             }
             else {
                 insertImpl();
             }
-
-            std::vector<size_t> indexes;
-            values = mergeValues(splitedValues, indexes);
-
-            onValuesChanged();
         }
         else {
             std::cout << "trying to remove unexisting value" << std::endl;
+            return;
         }
+        
+        std::vector<size_t> indexes;
+        values = mergeValues(splitedValues, indexes);
+
+        onValuesChanged();
     }
 
     std::vector<Command> set(const std::vector<Value>& newValues) {
@@ -304,10 +295,7 @@ struct Container {
         fixedValues.reserve( splitedValues.size() );
 
         size_t j = 0;
-
-
         std::vector<size_t> changedIndexes;
-
         for ( size_t i = 0; i < splitedValues.size(); ++i ) {
             if ( j < indexes.size() && i == indexes[j] ) {
                 if ( addedValueIndexes.empty() ) {
@@ -433,7 +421,7 @@ int main()
             int x = 1;
             ++x;
         }
-        std::vector<Value> values( rand() % 17 );
+        std::vector<Value> values( rand() % 1457 );
         for ( auto& v : values ) {
             v = std::to_string(rand() % 24);
             if ( v == "10" )
@@ -443,7 +431,7 @@ int main()
             else if ( v == "12" )
                 v = "y";
             else if ( v == "13" )
-                v = "xuy xuy";
+                v = "xuy+xuy";
         }
 
         doTest( values );
